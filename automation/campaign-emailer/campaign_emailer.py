@@ -59,6 +59,13 @@ SKIP_NAMES = {
     "reception", "receptionist", "front desk", "doctor", "dr.", "dr",
     "office", "admin", "manager", "staff", "team", "billing",
     "office manager", "front office", "n/a", "na", "none", "",
+    "parent billing company", "billing company", "owner", "unknown",
+}
+
+# Company names that are not real practice names (fall back to "Team")
+SKIP_COMPANIES = {
+    "parent billing company", "billing company", "unknown", "n/a", "na",
+    "none", "test", "",
 }
 
 
@@ -117,6 +124,14 @@ def parse_html_template() -> str:
     return html
 
 
+def is_generic_company(name: str) -> bool:
+    """Check if a company name is not a real practice name."""
+    if not name:
+        return True
+    cleaned = name.strip().lower()
+    return cleaned in SKIP_COMPANIES
+
+
 def personalize_html(html: str, contact_name: str | None, company_name: str) -> str:
     """Replace [[Practice Name]] in the HTML template with the appropriate name."""
     if contact_name and not is_generic_name(contact_name):
@@ -135,11 +150,25 @@ def personalize_html(html: str, contact_name: str | None, company_name: str) -> 
             html,
             flags=re.IGNORECASE
         )
-    else:
+    elif company_name and not is_generic_company(company_name):
         # Use company name, keep "team"
         html = re.sub(
             r'\[\[Practice Name\]\]',
             company_name.strip(),
+            html,
+            flags=re.IGNORECASE
+        )
+    else:
+        # No usable name at all — default to just "Team"
+        html = re.sub(
+            r'Hello\s*<strong>\[\[Practice Name\]\]</strong>\s*team,',
+            'Hello <strong>Team</strong>,',
+            html,
+            flags=re.IGNORECASE
+        )
+        html = re.sub(
+            r'Hello \[\[Practice Name\]\] team,',
+            'Hello Team,',
             html,
             flags=re.IGNORECASE
         )
