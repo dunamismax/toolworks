@@ -15,6 +15,7 @@ Usage:
 
 import argparse
 import os
+import quopri
 import re
 import subprocess
 import sys
@@ -95,15 +96,22 @@ def parse_html_template() -> str:
         print("ERROR: Could not extract HTML body from template", file=sys.stderr)
         sys.exit(1)
 
-    html = html_match.group(1)
-    # Decode quoted-printable soft line breaks
-    html = html.replace("=\n", "")
-    # Decode =XX hex sequences
+    raw = html_match.group(1)
+    # Proper QP decode: encode to ASCII bytes, decode QP, then decode UTF-8
+    # This correctly handles multi-byte UTF-8 sequences like =C2=A0 (NBSP)
+    html = quopri.decodestring(raw.encode('ascii', errors='replace')).decode('utf-8', errors='replace')
+
+    # Remove extra <br/> tags between email body and signature to tighten spacing
+    # The template has 2 extra line breaks before "Best Regards"
     html = re.sub(
-        r'=([0-9A-Fa-f]{2})',
-        lambda m: bytes.fromhex(m.group(1)).decode('utf-8', errors='replace'),
-        html
+        r'(<div id="ms-outlook-mobile-signature"[^>]*>)\s*'
+        r'<p[^>]*>\s*<span[^>]*><br/>\s*</span></p>\s*'
+        r'<p[^>]*>\s*<span[^>]*><br/>\s*</span></p>',
+        r'\1',
+        html,
+        flags=re.DOTALL
     )
+
     return html
 
 
