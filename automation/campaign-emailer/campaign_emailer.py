@@ -3,13 +3,14 @@
 campaign-emailer: Send templated marketing emails via Outlook on macOS.
 
 Reads an Excel campaign tracker, finds the next batch of un-emailed contacts,
-fills in the email template, and sends via AppleScript-driven Outlook.
+fills in the email template (HTML with signature), and sends via AppleScript-driven Outlook.
 
 Usage:
     python3 campaign_emailer.py                  # send next 10
     python3 campaign_emailer.py --count 5        # send next 5
     python3 campaign_emailer.py --dry-run        # preview without sending
     python3 campaign_emailer.py --status         # show tracker status
+    python3 campaign_emailer.py --test           # send one test to personal email
 """
 
 import argparse
@@ -17,6 +18,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -39,6 +41,7 @@ TEMPLATE_PATH = (
 FROM_EMAIL = "ssawyer@imagingservices.net"
 CC_EMAIL = "support@imagingservices.net"
 SUBJECT = "Protect your X-Ray operations with Comprehensive Support + Cloud Backup + RMM"
+TEST_EMAIL = "stephenvsawyer@gmail.com"
 
 # Column indices (0-based)
 COL_COMPANY = 1    # Company Name
@@ -56,84 +59,104 @@ SKIP_NAMES = {
 }
 
 
+def clean_contact_name(name: str) -> str:
+    """Clean up a contact name by removing parenthetical notes and extra whitespace."""
+    if not name:
+        return ""
+    # Remove parenthetical notes like "(business email)" or "(owner)"
+    cleaned = re.sub(r'\s*\([^)]*\)\s*', ' ', name)
+    return cleaned.strip()
+
+
 def is_generic_name(name: str) -> bool:
     """Check if a contact name is generic and should be replaced with company name."""
     if not name:
         return True
-    cleaned = name.strip().lower()
+    cleaned = clean_contact_name(name).lower()
     if cleaned in SKIP_NAMES:
         return True
-    # "Dr. LastName" is fine, but standalone "Dr." or "Doctor" is not
     if cleaned in ("dr.", "dr", "doctor"):
         return True
     return False
 
 
-def parse_template() -> str:
-    """Extract the plain-text body from the .emltpl file."""
+def parse_html_template() -> str:
+    """Extract the HTML body from the .emltpl file."""
     with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
         content = f.read()
 
-    # Find the plain text section (between Content-Type: text/plain and the next boundary)
-    # The template uses quoted-printable encoding
-    plain_match = re.search(
-        r'Content-Type: text/plain.*?\n\n(.*?)(?=\n--=)',
+    # Find the HTML section
+    html_match = re.search(
+        r'Content-Type: text/html.*?\n\n(.*?)(?=\n--=)',
         content,
         re.DOTALL
     )
-    if not plain_match:
-        print("ERROR: Could not extract plain text body from template", file=sys.stderr)
+    if not html_match:
+        print("ERROR: Could not extract HTML body from template", file=sys.stderr)
         sys.exit(1)
 
-    body = plain_match.group(1)
+    html = html_match.group(1)
     # Decode quoted-printable soft line breaks
-    body = body.replace("=\n", "")
-    # Decode common QP entities
-    body = body.replace("=E2=80=99", "'")
-    body = body.replace("=E2=80=93", "–")
-    body = body.replace("=E2=80=94", "—")
-    body = body.replace("=C2=A0", " ")
-    # Decode any remaining =XX sequences
-    body = re.sub(r'=([0-9A-Fa-f]{2})', lambda m: bytes.fromhex(m.group(1)).decode('utf-8', errors='replace'), body)
-    return body
-
-
-def personalize_body(body: str, contact_name: str | None, company_name: str) -> str:
-    """Replace [[Practice Name]] with the appropriate greeting."""
-    if contact_name and not is_generic_name(contact_name):
-        # Use contact name, remove "team"
-        greeting = f"Hello {contact_name.strip()},"
-    else:
-        # Use company name with "team"
-        greeting = f"Hello {company_name.strip()} Team,"
-
-    # Replace the template placeholder line
-    body = re.sub(
-        r'Hello \[\[Practice Name\]\] team,',
-        greeting,
-        body,
-        flags=re.IGNORECASE
+    html = html.replace("=\n", "")
+    # Decode =XX hex sequences
+    html = re.sub(
+        r'=([0-9A-Fa-f]{2})',
+        lambda m: bytes.fromhex(m.group(1)).decode('utf-8', errors='replace'),
+        html
     )
-    return body
+    return html
 
 
-def send_via_applescript(to_email: str, subject: str, body: str) -> bool:
-    """Send an email via Outlook using AppleScript."""
-    # Escape special characters for AppleScript
-    escaped_body = body.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
-    escaped_subject = subject.replace("\\", "\\\\").replace('"', '\\"')
-    escaped_to = to_email.replace("\\", "\\\\").replace('"', '\\"')
+def personalize_html(html: str, contact_name: str | None, company_name: str) -> str:
+    """Replace [[Practice Name]] in the HTML template with the appropriate name."""
+    if contact_name and not is_generic_name(contact_name):
+        clean_name = clean_contact_name(contact_name)
+        # Use contact name — replace "[[Practice Name]]</strong> team" with just the name
+        html = re.sub(
+            r'Hello\s*<strong>\[\[Practice Name\]\]</strong>\s*team,',
+            f'Hello <strong>{clean_name}</strong>,',
+            html,
+            flags=re.IGNORECASE
+        )
+        # Also handle any plain-text version that might exist
+        html = re.sub(
+            r'Hello \[\[Practice Name\]\] team,',
+            f'Hello {clean_name},',
+            html,
+            flags=re.IGNORECASE
+        )
+    else:
+        # Use company name, keep "team"
+        html = re.sub(
+            r'\[\[Practice Name\]\]',
+            company_name.strip(),
+            html,
+            flags=re.IGNORECASE
+        )
+    return html
 
-    script = f'''
-    tell application "Microsoft Outlook"
-        set newMessage to make new outgoing message with properties {{subject:"{escaped_subject}", plain text content:"{escaped_body}"}}
-        make new to recipient at newMessage with properties {{email address:{{address:"{escaped_to}"}}}}
-        make new cc recipient at newMessage with properties {{email address:{{address:"{CC_EMAIL}"}}}}
-        send newMessage
-    end tell
-    '''
+
+def send_html_via_applescript(to_email: str, cc_email: str, subject: str, html_body: str) -> bool:
+    """Send an HTML email via Outlook using AppleScript with a temp HTML file."""
+    # Write HTML to a temp file (avoids escaping nightmares in AppleScript strings)
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
+        f.write(html_body)
+        html_path = f.name
 
     try:
+        # AppleScript that reads HTML from file and sends via Outlook
+        script = f'''
+        set htmlFile to POSIX file "{html_path}"
+        set htmlContent to read htmlFile as «class utf8»
+
+        tell application "Microsoft Outlook"
+            set newMessage to make new outgoing message with properties {{subject:"{subject}", content:htmlContent}}
+            make new to recipient at newMessage with properties {{email address:{{address:"{to_email}"}}}}
+            make new cc recipient at newMessage with properties {{email address:{{address:"{cc_email}"}}}}
+            send newMessage
+        end tell
+        '''
+
         result = subprocess.run(
             ["osascript", "-e", script],
             capture_output=True,
@@ -150,6 +173,8 @@ def send_via_applescript(to_email: str, subject: str, body: str) -> bool:
     except Exception as e:
         print(f"  AppleScript exception: {e}", file=sys.stderr)
         return False
+    finally:
+        os.unlink(html_path)
 
 
 def get_pending_rows(ws, max_count: int) -> list[dict]:
@@ -159,7 +184,6 @@ def get_pending_rows(ws, max_count: int) -> list[dict]:
         vals = [cell.value for cell in row]
         emailed = vals[COL_EMAILED]
 
-        # Check for FALSE (boolean or string)
         if emailed is False or (isinstance(emailed, str) and emailed.upper() == "FALSE"):
             email_addr = vals[COL_EMAIL]
             if not email_addr or not isinstance(email_addr, str) or "@" not in email_addr:
@@ -196,7 +220,7 @@ def show_status():
 
     for row in ws.iter_rows(min_row=2, values_only=False):
         vals = [cell.value for cell in row]
-        if vals[COL_EMAIL]:  # has an email address
+        if vals[COL_EMAIL]:
             total += 1
             e = vals[COL_EMAILED]
             if e is True or (isinstance(e, str) and e.upper() == "TRUE"):
@@ -221,11 +245,43 @@ def show_status():
         print(f"  Next up (row {next_row['row']}): {next_row['contact'] or next_row['company']} <{next_row['email']}>")
 
 
+def send_test(html_template: str):
+    """Send a test email to personal address using the next pending contact's data."""
+    wb = openpyxl.load_workbook(TRACKER_PATH, read_only=True)
+    ws = wb.active
+
+    # Get next pending contact for realistic test data
+    pending = get_pending_rows(ws, 1)
+    wb.close()
+
+    if not pending:
+        print("No pending contacts to use as test data.")
+        return
+
+    contact = pending[0]
+    html = personalize_html(html_template, contact["contact"], contact["company"])
+
+    print(f"Sending TEST email to {TEST_EMAIL}")
+    print(f"  Using data from row {contact['row_num']}: {contact['company']}")
+    print(f"  Contact: {contact['contact'] or '(none)'}")
+
+    greeting_match = re.search(r'Hello\s*(?:<strong>)?(.+?)(?:</strong>)?\s*(?:team)?,', html)
+    if greeting_match:
+        print(f"  Greeting: Hello {greeting_match.group(1)}")
+
+    success = send_html_via_applescript(TEST_EMAIL, CC_EMAIL, f"[TEST] {SUBJECT}", html)
+    if success:
+        print(f"  → Test sent ✓ (tracker NOT updated)")
+    else:
+        print(f"  → Test FAILED ✗")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Send campaign emails via Outlook")
     parser.add_argument("--count", "-n", type=int, default=10, help="Number of emails to send (default: 10)")
     parser.add_argument("--dry-run", "-d", action="store_true", help="Preview emails without sending")
     parser.add_argument("--status", "-s", action="store_true", help="Show tracker status and exit")
+    parser.add_argument("--test", "-t", action="store_true", help="Send one test to personal email")
     args = parser.parse_args()
 
     if args.status:
@@ -240,8 +296,12 @@ def main():
         print(f"ERROR: Template not found: {TEMPLATE_PATH}", file=sys.stderr)
         sys.exit(1)
 
-    # Parse the email template
-    template_body = parse_template()
+    # Parse the HTML email template
+    html_template = parse_html_template()
+
+    if args.test:
+        send_test(html_template)
+        return
 
     # Open tracker (read-write)
     wb = openpyxl.load_workbook(TRACKER_PATH)
@@ -260,9 +320,11 @@ def main():
     failed = 0
 
     for contact in pending:
-        # Personalize
-        body = personalize_body(template_body, contact["contact"], contact["company"])
-        greeting_preview = body.split("\n")[0]
+        html = personalize_html(html_template, contact["contact"], contact["company"])
+
+        # Extract greeting for display
+        greeting_match = re.search(r'Hello\s*(?:<strong>)?(.+?)(?:</strong>)?\s*(?:team)?,', html)
+        greeting_preview = f"Hello {greeting_match.group(1)}" if greeting_match else "(unknown)"
 
         print(f"  Row {contact['row_num']}: {contact['company']}")
         print(f"    To: {contact['email']}")
@@ -272,7 +334,7 @@ def main():
             print(f"    → [DRY RUN] Would send")
             sent += 1
         else:
-            success = send_via_applescript(contact["email"], SUBJECT, body)
+            success = send_html_via_applescript(contact["email"], CC_EMAIL, SUBJECT, html)
             if success:
                 update_tracker(ws, contact["row_num"])
                 print(f"    → Sent ✓")
