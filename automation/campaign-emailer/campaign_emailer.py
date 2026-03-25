@@ -39,6 +39,8 @@ TEMPLATE_PATH = (
     "Marketing - Comprehensive Coverage Offer - Standard.emltpl"
 )
 
+TRACKER_LOCK = TRACKER_PATH.rsplit("/", 1)[0] + "/~$" + TRACKER_PATH.rsplit("/", 1)[1]
+
 FROM_EMAIL = "ssawyer@imagingservices.net"
 CC_EMAIL = "support@imagingservices.net"
 SUBJECT = "Protect your X-Ray operations with Comprehensive Support + Cloud Backup + RMM"
@@ -302,6 +304,14 @@ def main():
         sys.exit(1)
     if not os.path.exists(TEMPLATE_PATH):
         print(f"ERROR: Template not found: {TEMPLATE_PATH}", file=sys.stderr)
+        sys.exit(1)
+
+    # Check if Excel has the tracker open (lock file = saves will be overwritten)
+    if not args.status and not args.dry_run and os.path.exists(TRACKER_LOCK):
+        print("⚠️  WARNING: The campaign tracker is open in Excel.")
+        print("   The tracker CANNOT be updated while Excel has it open.")
+        print("   Close the file in Excel first, then run again.")
+        print(f"   Lock file: {TRACKER_LOCK}")
         sys.exit(1)
 
     # Parse the HTML email template
