@@ -11,12 +11,10 @@ Usage:
     python3 campaign_emailer.py --dry-run        # preview without sending
     python3 campaign_emailer.py --status         # show tracker status
     python3 campaign_emailer.py --test           # send one test to personal email (no CC)
-    python3 campaign_emailer.py --template v2    # use v2 template
 """
 
 import argparse
 import os
-import quopri
 import re
 import subprocess
 import sys
@@ -34,13 +32,7 @@ TRACKER_PATH = (
     "contacts-campaign-tracker.xlsx"
 )
 
-TEMPLATE_V1_PATH = (
-    "/Users/sawyer/Library/CloudStorage/OneDrive-ImagingServicesInc/"
-    "OneDrive - Work Desktop/06-Email-Templates/Stephen/"
-    "Marketing - Comprehensive Coverage Offer - Standard.emltpl"
-)
-
-TEMPLATE_V2_PATH = str(
+TEMPLATE_PATH = str(
     Path(__file__).parent / "templates" / "v2-coverage-offer.html"
 )
 
@@ -48,8 +40,7 @@ TRACKER_LOCK = TRACKER_PATH.rsplit("/", 1)[0] + "/~$" + TRACKER_PATH.rsplit("/",
 
 FROM_EMAIL = "ssawyer@imagingservices.net"
 CC_EMAIL = "support@imagingservices.net"
-SUBJECT_V1 = "Protect your X-Ray operations with Comprehensive Support + Cloud Backup + RMM"
-SUBJECT_V2 = "Your imaging system's support coverage has lapsed"
+SUBJECT = "Your imaging system's support coverage has lapsed"
 TEST_EMAIL = "stephenvsawyer@gmail.com"
 
 # Column indices (0-based)
@@ -78,12 +69,19 @@ SKIP_COMPANIES = {
     "none", "test", "",
 }
 
+# Words in a contact name that suggest it's a business name, not a person
+BUSINESS_NAME_MARKERS = {
+    "llc", "inc", "corp", "corporation", "associates", "partners",
+    "veterinary", "chiropractic", "podiatry", "orthopedic", "ortho",
+    "hospital", "clinic", "center", "practice", "medical", "health",
+    "animal", "foot", "ankle", "spine", "family", "group", "services",
+}
+
 
 def clean_contact_name(name: str) -> str:
     """Clean up a contact name by removing parenthetical notes and extra whitespace."""
     if not name:
         return ""
-    # Remove parenthetical notes like "(business email)" or "(owner)"
     cleaned = re.sub(r'\s*\([^)]*\)\s*', ' ', name)
     return cleaned.strip()
 
@@ -94,15 +92,6 @@ def is_single_word_name(name: str) -> bool:
     return len(parts) == 1
 
 
-# Words in a contact name that suggest it's a business name, not a person
-BUSINESS_NAME_MARKERS = {
-    "llc", "inc", "corp", "corporation", "associates", "partners",
-    "veterinary", "chiropractic", "podiatry", "orthopedic", "ortho",
-    "hospital", "clinic", "center", "practice", "medical", "health",
-    "animal", "foot", "ankle", "spine", "family", "group", "services",
-}
-
-
 def is_generic_name(name: str) -> bool:
     """Check if a contact name is generic and should be replaced."""
     if not name:
@@ -110,7 +99,6 @@ def is_generic_name(name: str) -> bool:
     cleaned = clean_contact_name(name).lower()
     if cleaned in SKIP_NAMES:
         return True
-    # Check if any word in the name is a business marker (likely a company name pasted in)
     words = set(cleaned.split())
     if words & BUSINESS_NAME_MARKERS:
         return True
@@ -118,29 +106,18 @@ def is_generic_name(name: str) -> bool:
 
 
 def build_greeting(contact_name: str | None, company_name: str) -> str:
-    """Build a natural greeting line from contact and company data.
-
-    Priority:
-    1. Full contact name (two+ words) -> "Hi Dr. Jane Smith" or "Hi Jane"
-    2. Company name (if real) -> "Hi there" (don't address as company name)
-    3. Fallback -> "Hi there"
-    """
+    """Build a natural greeting line from contact and company data."""
     if contact_name and not is_generic_name(contact_name):
         clean = clean_contact_name(contact_name)
 
-        # If it's a single word, it's probably a last name. Skip it.
         if is_single_word_name(clean):
-            # Fall through to company/generic greeting
-            pass
+            pass  # Fall through to generic greeting
         else:
-            # Multi-word name. Use first name only for warmth.
             parts = clean.split()
-            # Handle "Dr. Something" or "Dr Something"
             if parts[0].lower().rstrip(".") == "dr" and len(parts) > 1:
                 return f"Hi Dr. {parts[1]},"
             return f"Hi {parts[0]},"
 
-    # No usable contact name - use a warm generic greeting
     return "Hi there,"
 
 
@@ -152,93 +129,16 @@ def is_generic_company(name: str) -> bool:
     return cleaned in SKIP_COMPANIES
 
 
-def parse_v1_template() -> str:
-    """Extract the HTML body from the v1 .emltpl file."""
-    with open(TEMPLATE_V1_PATH, "r", encoding="utf-8") as f:
-        content = f.read()
-
-    # Find the HTML section
-    html_match = re.search(
-        r'Content-Type: text/html.*?\n\n(.*?)(?=\n--=)',
-        content,
-        re.DOTALL
-    )
-    if not html_match:
-        print("ERROR: Could not extract HTML body from template", file=sys.stderr)
-        sys.exit(1)
-
-    raw = html_match.group(1)
-    html = quopri.decodestring(raw.encode('ascii', errors='replace')).decode('utf-8', errors='replace')
-
-    # Remove extra <br/> tags between email body and signature
-    html = re.sub(
-        r'(<div id="ms-outlook-mobile-signature"[^>]*>)\s*'
-        r'<p[^>]*>\s*<span[^>]*><br/>\s*</span></p>\s*'
-        r'<p[^>]*>\s*<span[^>]*><br/>\s*</span></p>',
-        r'\1',
-        html,
-        flags=re.DOTALL
-    )
-
-    return html
-
-
-def parse_v2_template() -> str:
-    """Load the v2 HTML template file directly."""
-    with open(TEMPLATE_V2_PATH, "r", encoding="utf-8") as f:
+def load_template() -> str:
+    """Load the HTML template file."""
+    with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
         return f.read()
 
 
-def personalize_html(html: str, contact_name: str | None, company_name: str, template_version: str) -> str:
+def personalize_html(html: str, contact_name: str | None, company_name: str) -> str:
     """Replace greeting placeholder in the HTML template."""
     greeting = build_greeting(contact_name, company_name)
-
-    if template_version == "v2":
-        # V2 template uses {{GREETING}} placeholder
-        html = html.replace("{{GREETING}}", greeting)
-    else:
-        # V1 template uses [[Practice Name]] pattern
-        if contact_name and not is_generic_name(contact_name) and not is_single_word_name(clean_contact_name(contact_name)):
-            clean_name = clean_contact_name(contact_name)
-            parts = clean_name.split()
-            if parts[0].lower().rstrip(".") == "dr" and len(parts) > 1:
-                display = f"Dr. {parts[1]}"
-            else:
-                display = parts[0]
-            html = re.sub(
-                r'Hello\s*<strong>\[\[Practice Name\]\]</strong>\s*team,',
-                f'Hello <strong>{display}</strong>,',
-                html,
-                flags=re.IGNORECASE
-            )
-            html = re.sub(
-                r'Hello \[\[Practice Name\]\] team,',
-                f'Hello {display},',
-                html,
-                flags=re.IGNORECASE
-            )
-        elif company_name and not is_generic_company(company_name):
-            html = re.sub(
-                r'\[\[Practice Name\]\]',
-                company_name.strip(),
-                html,
-                flags=re.IGNORECASE
-            )
-        else:
-            html = re.sub(
-                r'Hello\s*<strong>\[\[Practice Name\]\]</strong>\s*team,',
-                'Hello,',
-                html,
-                flags=re.IGNORECASE
-            )
-            html = re.sub(
-                r'Hello \[\[Practice Name\]\] team,',
-                'Hello,',
-                html,
-                flags=re.IGNORECASE
-            )
-
-    return html
+    return html.replace("{{GREETING}}", greeting)
 
 
 def send_html_via_applescript(to_email: str, cc_email: str | None, subject: str, html_body: str) -> bool:
@@ -248,7 +148,6 @@ def send_html_via_applescript(to_email: str, cc_email: str | None, subject: str,
         html_path = f.name
 
     try:
-        # Build CC line only if cc_email is provided
         if cc_email:
             cc_line = f'make new cc recipient at newMessage with properties {{email address:{{address:"{cc_email}"}}}}'
         else:
@@ -354,12 +253,11 @@ def show_status():
         print(f"  Next up (row {next_row['row']}): {next_row['contact'] or next_row['company']} <{next_row['email']}>")
 
 
-def send_test(html_template: str, template_version: str, subject: str):
+def send_test(html_template: str):
     """Send a test email to personal address. No CC, no tracker update."""
     wb = openpyxl.load_workbook(TRACKER_PATH, read_only=True)
     ws = wb.active
 
-    # Get next pending contact for realistic test data
     pending = get_pending_rows(ws, 1)
     wb.close()
 
@@ -369,18 +267,16 @@ def send_test(html_template: str, template_version: str, subject: str):
 
     contact = pending[0]
     greeting = build_greeting(contact["contact"], contact["company"])
-    html = personalize_html(html_template, contact["contact"], contact["company"], template_version)
+    html = personalize_html(html_template, contact["contact"], contact["company"])
 
     print(f"Sending TEST email to {TEST_EMAIL}")
-    print(f"  Template: {template_version}")
-    print(f"  Subject: [TEST] {subject}")
+    print(f"  Subject: [TEST] {SUBJECT}")
     print(f"  Using data from row {contact['row_num']}: {contact['company']}")
     print(f"  Contact: {contact['contact'] or '(none)'}")
     print(f"  Greeting: {greeting}")
     print(f"  CC: (none - test mode)")
 
-    # Test mode: send to personal email, no CC
-    success = send_html_via_applescript(TEST_EMAIL, None, f"[TEST] {subject}", html)
+    success = send_html_via_applescript(TEST_EMAIL, None, f"[TEST] {SUBJECT}", html)
     if success:
         print(f"  -> Test sent to {TEST_EMAIL}")
     else:
@@ -393,66 +289,50 @@ def main():
     parser.add_argument("--dry-run", "-d", action="store_true", help="Preview emails without sending")
     parser.add_argument("--status", "-s", action="store_true", help="Show tracker status and exit")
     parser.add_argument("--test", "-t", action="store_true", help="Send one test to personal email (no CC)")
-    parser.add_argument("--template", choices=["v1", "v2"], default="v2", help="Template version (default: v2)")
     args = parser.parse_args()
 
     if args.status:
         show_status()
         return
 
-    # Verify files exist
     if not os.path.exists(TRACKER_PATH):
         print(f"ERROR: Tracker not found: {TRACKER_PATH}", file=sys.stderr)
         sys.exit(1)
 
-    # Select template and subject
-    if args.template == "v2":
-        template_path = TEMPLATE_V2_PATH
-        subject = SUBJECT_V2
-    else:
-        template_path = TEMPLATE_V1_PATH
-        subject = SUBJECT_V1
-
-    if not os.path.exists(template_path):
-        print(f"ERROR: Template not found: {template_path}", file=sys.stderr)
+    if not os.path.exists(TEMPLATE_PATH):
+        print(f"ERROR: Template not found: {TEMPLATE_PATH}", file=sys.stderr)
         sys.exit(1)
 
-    # Check if Excel has the tracker open (lock file = saves will be overwritten)
-    if not args.status and not args.dry_run and not args.test and os.path.exists(TRACKER_LOCK):
+    # Check if Excel has the tracker open
+    if not args.dry_run and not args.test and os.path.exists(TRACKER_LOCK):
         print("WARNING: The campaign tracker is open in Excel.")
         print("   The tracker CANNOT be updated while Excel has it open.")
         print("   Close the file in Excel first, then run again.")
         print(f"   Lock file: {TRACKER_LOCK}")
         sys.exit(1)
 
-    # Parse the HTML email template
-    if args.template == "v2":
-        html_template = parse_v2_template()
-    else:
-        html_template = parse_v1_template()
+    html_template = load_template()
 
     if args.test:
-        send_test(html_template, args.template, subject)
+        send_test(html_template)
         return
 
-    # Open tracker (read-write)
     wb = openpyxl.load_workbook(TRACKER_PATH)
     ws = wb.active
 
-    # Get pending rows
     pending = get_pending_rows(ws, args.count)
     if not pending:
         print("No pending contacts found. All caught up!")
         wb.close()
         return
 
-    print(f"{'[DRY RUN] ' if args.dry_run else ''}Processing {len(pending)} email(s) (template: {args.template})...\n")
+    print(f"{'[DRY RUN] ' if args.dry_run else ''}Processing {len(pending)} email(s)...\n")
 
     sent = 0
     failed = 0
 
     for contact in pending:
-        html = personalize_html(html_template, contact["contact"], contact["company"], args.template)
+        html = personalize_html(html_template, contact["contact"], contact["company"])
         greeting = build_greeting(contact["contact"], contact["company"])
 
         print(f"  Row {contact['row_num']}: {contact['company']}")
@@ -463,7 +343,7 @@ def main():
             print(f"    -> [DRY RUN] Would send")
             sent += 1
         else:
-            success = send_html_via_applescript(contact["email"], CC_EMAIL, subject, html)
+            success = send_html_via_applescript(contact["email"], CC_EMAIL, SUBJECT, html)
             if success:
                 update_tracker(ws, contact["row_num"])
                 print(f"    -> Sent")
@@ -474,7 +354,6 @@ def main():
 
         print()
 
-    # Save tracker if we actually sent
     if not args.dry_run and sent > 0:
         wb.save(TRACKER_PATH)
         print(f"Tracker updated ({sent} rows marked TRUE).")
