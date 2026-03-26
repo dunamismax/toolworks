@@ -49,7 +49,7 @@ TRACKER_LOCK = TRACKER_PATH.rsplit("/", 1)[0] + "/~$" + TRACKER_PATH.rsplit("/",
 FROM_EMAIL = "ssawyer@imagingservices.net"
 CC_EMAIL = "support@imagingservices.net"
 SUBJECT_V1 = "Protect your X-Ray operations with Comprehensive Support + Cloud Backup + RMM"
-SUBJECT_V2 = "Quick question about your imaging equipment"
+SUBJECT_V2 = "Your imaging system's support coverage has lapsed"
 TEST_EMAIL = "stephenvsawyer@gmail.com"
 
 # Column indices (0-based)
