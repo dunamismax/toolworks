@@ -86,10 +86,34 @@ def clean_contact_name(name: str) -> str:
     return cleaned.strip()
 
 
-def is_single_word_name(name: str) -> bool:
-    """Check if a name is just one word (likely a last name only)."""
-    parts = name.strip().split()
-    return len(parts) == 1
+def normalize_contact_name(name: str) -> str:
+    """Normalize obvious casing issues in contact names for greetings."""
+    cleaned = clean_contact_name(name)
+    if not cleaned:
+        return ""
+
+    parts = []
+    for token in cleaned.split():
+        letters_only = re.sub(r"[^A-Za-z]", "", token)
+        if letters_only and (letters_only.isupper() or letters_only.islower()):
+            token = token.title()
+        parts.append(token)
+
+    return " ".join(parts)
+
+
+def is_bad_greeting_token(token: str) -> bool:
+    """Check whether a greeting token is too generic or malformed to use."""
+    normalized = re.sub(r"[^A-Za-z]", "", token).lower()
+    if not normalized:
+        return True
+    if len(normalized) == 1:
+        return True
+    if normalized in SKIP_NAMES:
+        return True
+    if normalized in BUSINESS_NAME_MARKERS:
+        return True
+    return False
 
 
 def is_generic_name(name: str) -> bool:
@@ -108,15 +132,19 @@ def is_generic_name(name: str) -> bool:
 def build_greeting(contact_name: str | None, company_name: str) -> str:
     """Build a natural greeting line from contact and company data."""
     if contact_name and not is_generic_name(contact_name):
-        clean = clean_contact_name(contact_name)
+        clean = normalize_contact_name(contact_name)
+        parts = clean.split()
 
-        if is_single_word_name(clean):
-            pass  # Fall through to generic greeting
-        else:
-            parts = clean.split()
-            if parts[0].lower().rstrip(".") == "dr" and len(parts) > 1:
-                return f"Hi Dr. {parts[1]},"
-            return f"Hi {parts[0]},"
+        if parts:
+            first = re.sub(r"^[^A-Za-z]+|[^A-Za-z]+$", "", parts[0])
+            if first.lower().rstrip(".") == "dr" and len(parts) > 1:
+                doctor_name = re.sub(r"^[^A-Za-z]+|[^A-Za-z]+$", "", parts[1])
+                if doctor_name and not is_bad_greeting_token(doctor_name):
+                    return f"Hi Dr. {doctor_name},"
+                return "Hi there,"
+
+            if first and not is_bad_greeting_token(first):
+                return f"Hi {first},"
 
     return "Hi there,"
 
