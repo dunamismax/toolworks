@@ -36,7 +36,7 @@ DEFAULT_TRACKER_PATH = (
 )
 DEFAULT_TEMPLATE_PATH = str(Path(__file__).parent / "templates" / "v2-coverage-offer.html")
 DEFAULT_CC_EMAIL = "support@imagingservices.net"
-DEFAULT_SUBJECT = "Your imaging system's support coverage has lapsed"
+DEFAULT_SUBJECT = "Special Offer: Reinstate Coverage and Get Free Cloud Backup"
 DEFAULT_TEST_EMAIL = "stephenvsawyer@gmail.com"
 
 TRACKER_PATH = os.environ.get("CAMPAIGN_EMAILER_TRACKER_PATH", DEFAULT_TRACKER_PATH)
