@@ -8,11 +8,11 @@ This file is the active execution manual for `toolworks` while the repo is still
 
 Future agents are expected to:
 
-- work through this file before making structural changes
-- keep it current when repo truth changes
+- work through this file before making structural or migration-heavy changes
+- keep it current when repo truth, sequencing, or scope changes
 - check boxes only after work is actually done and verified
-- leave stable docs such as `README.md` current-state oriented
-- delete this file once it stops being an honest, maintained build tracker
+- leave stable docs such as `README.md` and tool-local READMEs current-state oriented
+- remove this file once it stops being an honest, maintained build tracker
 
 If this file becomes stale, fix it or remove it. Do not let it rot into fake truth.
 
@@ -20,7 +20,7 @@ If this file becomes stale, fix it or remove it. Do not let it rot into fake tru
 
 `toolworks` should stay a **Python-first automation workshop**.
 
-A literal full-stack Bun rewrite would be a bad fit for the repo as it exists today.
+A literal rewrite into Stephen's default full-stack web lane would be a poor fit for the repo as it exists today.
 
 This repo currently earns its keep as a place for:
 
@@ -29,16 +29,11 @@ This repo currently earns its keep as a place for:
 - operational jobs
 - experiments that may later graduate into their own repos
 
-That fits Stephen's current portfolio direction just fine. His broader stack has become more opinionated, but the honest alignment here is:
-
-- keep Python for automation, scripting, and operational tooling
-- use `uv`, local `pyproject.toml`, `ruff`, `pyright`, and `pytest` as the default Python lane
-- keep repo docs explicit and current-state oriented
-- promote browser-first products out of this repo instead of forcing `toolworks` to become a full web monolith
+That already fits Stephen's current portfolio direction.
 
 ## Alignment with Stephen's current stack
 
-The current full-stack web lane is still relevant here, but only at the edges.
+Stephen's current web-first default still matters here, but only where it is honestly applicable.
 
 ### What stays in the Python lane
 
@@ -46,22 +41,34 @@ The current full-stack web lane is still relevant here, but only at the edges.
 - macOS and Outlook scripting
 - task-focused CLI utilities
 - operational helpers that are faster and safer in the terminal
+- per-tool local manifests and verification
+
+For this lane, the default baseline is:
+
+- `uv`
+- local `pyproject.toml`
+- `ruff`
+- `pyright`
+- `pytest`
 
 ### What can align with the web lane later
 
-Only if a tool grows into a real browser-first product:
+Only if a tool grows into a real browser-first product or operator surface:
 
+- Bun for the runtime of a dedicated web surface
 - Astro for page ownership
-- Vue only for interaction-heavy UI
-- PostgreSQL when shared durable state is genuinely needed
-- Docker Compose and Caddy when deployment becomes part of the job
+- Vue only where interaction clearly earns it
+- plain CSS by default
+- PostgreSQL only when shared durable state is genuinely needed
+- Docker Compose and Caddy when deployment becomes part of the real job
 
 ### What should not be forced here
 
-- Bun workspace conversion for the whole repo
-- Elysia APIs for scripts that are still local tools
-- a database for tools that do not need one
+- a Bun workspace conversion for the whole repo
+- an Elysia API for scripts that are still local tools
+- PostgreSQL for tools that do not need shared relational state
 - a dashboard just because the preferred portfolio stack now includes one
+- a fake browser layer that exists only to match a trend
 
 ## Repo truth today
 
@@ -83,7 +90,7 @@ The real path forward is:
 2. standardize quality and safety for Python tools
 3. improve docs and repeatability
 4. promote any tool that becomes product-shaped into its own repo
-5. only build a full-stack web app when there is an actual browser-first product to justify it
+5. only build a web surface when there is an actual browser-first need
 
 ## Rules for structural decisions
 
@@ -94,9 +101,9 @@ Before adding framework weight, answer these questions:
 3. Would the tool be clearer as its own repo?
 4. Is shared durable state now a real requirement?
 
-If the answer to those is mostly "no", stay in the Python lane.
+If the answers are mostly no, stay in the Python lane.
 
-If the answer is mostly "yes", the likely next move is to spin the tool out into its own dedicated repo that can use the proper web stack cleanly.
+If the answers are mostly yes, the likely next move is to spin that tool out into its own repo that can use the full web stack cleanly.
 
 ## Phased plan
 
@@ -190,8 +197,8 @@ Work items:
 
 - [ ] Write a short note explaining why a browser-first product now exists and why it belongs here or should move out.
 - [ ] If the tool stays here temporarily, keep the web surface isolated from the Python workshop structure.
-- [ ] Use Astro for page ownership and add Vue only where interactivity clearly earns it.
-- [ ] Choose the backend lane honestly: Python if it remains automation-heavy, or the full Bun web lane only if that is now the cleanest fit.
+- [ ] Use Bun, Astro, plain CSS, and Vue only where interaction clearly earns it.
+- [ ] Choose the backend lane honestly: Python if it remains automation-heavy, or Bun plus Elysia only if that is now the cleanest fit.
 - [ ] Define local run, verification, and deployment shape before shipping UI code.
 
 Acceptance criteria:
@@ -212,5 +219,5 @@ When you complete work against this file:
 ## Notes for the next agent
 
 - Default to the Python automation lane.
-- Treat Stephen's Bun + Astro + Vue stack as the default for standalone browser-first products, not for every utility repo by force.
+- Treat Stephen's Bun and Astro web stack as the default for standalone browser-first products, not for every utility repo by force.
 - When a tool becomes product-shaped, promotion is usually cleaner than growing a web platform inside this workshop.
