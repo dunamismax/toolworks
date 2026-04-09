@@ -8,6 +8,8 @@ A curated workshop for scripts, small tools, and automation that earn their keep
 
 Current-state usage, setup, and verification live in the root README plus each tool's local README.
 
+When present, `BUILD.md` is the active execution manual for repo evolution. It does not replace current-state docs.
+
 ## Inventory
 
 | Name | Type | Language | Status | Purpose | Run |
